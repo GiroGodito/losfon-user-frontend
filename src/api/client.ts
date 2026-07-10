@@ -2,7 +2,7 @@
 
 import type { DeviceFingerprint } from '../utils/fingerprint';
 
-const API_BASE_URL = 'https://losfonapp.runasp.net/api';
+const API_BASE_URL = '/api';
 
 export interface ApiResponse<T = any> {
   success: boolean;
