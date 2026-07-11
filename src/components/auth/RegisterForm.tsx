@@ -587,7 +587,7 @@ export const RegisterForm = () => {
               <input
                 type="text"
                 name="fullName"
-                placeholder="Full Name"
+                placeholder="Full Name (Godito, Lito Arthon R.)"
                 value={formData.fullName}
                 onChange={handleChange}
                 required
