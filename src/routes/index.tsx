@@ -13,6 +13,7 @@ import { NotificationDetailsPage } from '../pages/NotificationDetailsPage'; // â
 import { ProfilePage } from '../pages/ProfilePage';
 import { LostItemDetailsPage } from '../pages/LostItemDetailsPage';
 import { ClaimedItemDetailsPage } from '../pages/ClaimedItemDetailsPage';
+import {HomePage} from '../pages/HomePage'
 
 export const router = createBrowserRouter([
   {
@@ -71,7 +72,7 @@ export const router = createBrowserRouter([
   },
   {
     path: '/',
-    element: <LoginPage />,
+    element: <HomePage />,
   },
 ]);
 
