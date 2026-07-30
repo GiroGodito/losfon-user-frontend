@@ -94,7 +94,7 @@ export const LostItemDetails: React.FC<LostItemDetailsProps> = ({
       <div className="mt-6 pt-6 border-t border-gray-800">
         <div className="flex flex-wrap gap-3">
           {onCancel && (
-            <Button variant="glass-red" onClick={() => onCancel(item.id)}>
+            <Button variant="glass-red" onClick={() => onCancel(item.id)} fullWidth>
               Cancel Report
             </Button>
           )}
@@ -138,7 +138,7 @@ export const LostItemDetails: React.FC<LostItemDetailsProps> = ({
             <div>
               <p className="font-medium text-yellow-400">Item Moved to Cold Case</p>
               <p className="text-sm text-gray-400">
-                This item has been moved to cold case after 180 days. It is no longer actively tracked.
+                This item has been moved to cold case after a set number of days not being found. It is no longer actively tracked.
               </p>
             </div>
           </div>
