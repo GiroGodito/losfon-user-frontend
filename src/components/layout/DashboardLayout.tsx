@@ -260,6 +260,7 @@
 // export default DashboardLayout;
 
 // src/components/layout/DashboardLayout.tsx
+// src/components/layout/DashboardLayout.tsx
 import React, { useState, useEffect } from 'react';
 import { Outlet, useNavigate } from 'react-router-dom';
 import { Header } from './Header';
@@ -274,6 +275,7 @@ export const DashboardLayout: React.FC = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
 
+  // Close sidebar on Escape
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && sidebarOpen) setSidebarOpen(false);
@@ -282,6 +284,7 @@ export const DashboardLayout: React.FC = () => {
     return () => window.removeEventListener('keydown', handleEscape);
   }, [sidebarOpen]);
 
+  // Lock body scroll when mobile sidebar is open
   useEffect(() => {
     document.body.style.overflow = sidebarOpen ? 'hidden' : 'unset';
     return () => { document.body.style.overflow = 'unset'; };
@@ -297,9 +300,10 @@ export const DashboardLayout: React.FC = () => {
 
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-br from-gray-900 via-gray-800 to-black">
+      {/* Header stays sticky at top */}
       <Header onMenuToggle={toggleSidebar} />
 
-      {/* ✅ FIX: remove overflow-hidden, don't let this wrapper grow beyond viewport */}
+      {/* Main row: sidebar + content */}
       <div className="flex flex-1 min-h-0">
         {/* Mobile overlay */}
         {sidebarOpen && (
@@ -309,12 +313,15 @@ export const DashboardLayout: React.FC = () => {
           />
         )}
 
-        {/* ✅ FIX: sidebar is sticky with correct top offset and height */}
+        {/* ========== SIDEBAR ==========
+            - Desktop: fixed left column, full height under header, never scrolls with content
+            - Mobile: slide-in drawer
+        */}
         <aside
           className={`
-            fixed md:sticky md:top-16 top-0 z-40
-            h-screen md:h-[calc(100vh-4rem)]
-            w-72 bg-gray-900/95 backdrop-blur-sm border-r border-gray-800
+            fixed top-0 left-0 z-50 h-screen w-72
+            md:sticky md:top-16 md:h-[calc(100vh-4rem)]
+            bg-gray-900/95 backdrop-blur-sm border-r border-gray-800
             transition-transform duration-300 ease-in-out
             ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
             flex flex-col shadow-2xl
@@ -330,12 +337,12 @@ export const DashboardLayout: React.FC = () => {
             <XMarkIcon className="w-6 h-6" />
           </Button>
 
-          {/* Navigation - scrollable if too many items */}
+          {/* Navigation links — scroll internally if list is long */}
           <div className="flex-1 min-h-0 overflow-y-auto pt-4 px-3 pb-3">
             <Navigation onItemClick={closeSidebar} />
           </div>
 
-          {/* Sidebar footer */}
+          {/* Sidebar footer — pinned to bottom, always visible */}
           <div className="flex-shrink-0 p-4 border-t border-gray-800">
             <div className="flex items-center gap-3 text-sm">
               <div className="w-10 h-10 bg-gradient-to-br from-green-500/20 to-blue-500/20 rounded-full flex items-center justify-center border border-green-500/30 flex-shrink-0">
@@ -362,7 +369,9 @@ export const DashboardLayout: React.FC = () => {
           </div>
         </aside>
 
-        {/* Main content */}
+        {/* ========== MAIN CONTENT ==========
+            Scrolls independently. Sidebar stays put.
+        */}
         <main className="flex-1 min-w-0 p-4 md:p-6">
           <div className="max-w-6xl mx-auto">
             <Outlet />
