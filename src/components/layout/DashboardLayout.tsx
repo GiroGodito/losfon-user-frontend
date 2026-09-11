@@ -262,6 +262,7 @@
 // src/components/layout/DashboardLayout.tsx
 // src/components/layout/DashboardLayout.tsx
 // src/components/layout/DashboardLayout.tsx
+// src/components/layout/DashboardLayout.tsx
 import React, { useState, useEffect } from 'react';
 import { Outlet, useNavigate } from 'react-router-dom';
 import { Header } from './Header';
@@ -300,79 +301,83 @@ export const DashboardLayout: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-gradient-to-br from-gray-900 via-gray-800 to-black">
+    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-black">
+
+      {/* ============ HEADER (fixed, z-50) ============ */}
       <Header onMenuToggle={toggleSidebar} />
 
-      {/* Row: sidebar + main. NO overflow-hidden (kills sticky). */}
-      <div className="flex flex-1">
-
-        {/* Mobile overlay */}
-        {sidebarOpen && (
-          <div
-            className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm md:hidden"
-            onClick={closeSidebar}
-          />
-        )}
-
-        {/* SIDEBAR */}
-        <aside
-          className={`
-            fixed top-0 left-0 z-50 h-screen w-72
-            md:sticky md:top-16 md:h-[calc(100vh-4rem)] md:z-30
-            bg-gray-900/95 backdrop-blur-sm border-r border-gray-800
-            transition-transform duration-300 ease-in-out
-            ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
-            flex flex-col shadow-2xl flex-shrink-0
-          `}
+      {/* ============ SIDEBAR — position: fixed on desktop ============ */}
+      {/* Nothing can scroll this. Ever. */}
+      <aside
+        className={`
+          fixed top-16 bottom-0 left-0 z-30 w-72
+          bg-gray-900/95 backdrop-blur-sm border-r border-gray-800
+          transition-transform duration-300 ease-in-out
+          ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+          flex flex-col shadow-2xl
+        `}
+      >
+        {/* Mobile close button */}
+        <Button
+          onClick={closeSidebar}
+          className="md:hidden absolute top-4 right-4 z-50 p-2 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-all"
+          aria-label="Close menu"
+          variant="glass-grey"
         >
-          <Button
-            onClick={closeSidebar}
-            className="md:hidden absolute top-4 right-4 z-50 p-2 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-all"
-            aria-label="Close menu"
-            variant="glass-grey"
-          >
-            <XMarkIcon className="w-6 h-6" />
-          </Button>
+          <XMarkIcon className="w-6 h-6" />
+        </Button>
 
-          <div className="flex-1 min-h-0 overflow-y-auto pt-4 px-3 pb-3">
-            <Navigation onItemClick={closeSidebar} />
-          </div>
+        {/* Nav list — only this scrolls if it's too tall */}
+        <div className="flex-1 min-h-0 overflow-y-auto pt-4 px-3 pb-3">
+          <Navigation onItemClick={closeSidebar} />
+        </div>
 
-          <div className="flex-shrink-0 p-4 border-t border-gray-800">
-            <div className="flex items-center gap-3 text-sm">
-              <div className="w-10 h-10 bg-gradient-to-br from-green-500/20 to-blue-500/20 rounded-full flex items-center justify-center border border-green-500/30 flex-shrink-0">
-                <span className="text-green-400 font-semibold text-sm">
-                  {user?.fullName?.charAt(0)?.toUpperCase() || 'U'}
-                </span>
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-white text-sm font-medium truncate">
-                  {user?.fullName || 'User'}
-                </p>
-                <p className="text-gray-500 text-xs truncate">
-                  {user?.email || 'user@email.com'}
-                </p>
-              </div>
-              <button
-                onClick={handleLogout}
-                className="p-2 rounded-lg text-gray-400 hover:text-red-400 hover:bg-red-500/10 transition-all flex-shrink-0"
-                title="Logout"
-              >
-                <ArrowRightOnRectangleIcon className="w-4 h-4" />
-              </button>
+        {/* Sidebar footer — pinned to bottom of fixed sidebar */}
+        <div className="flex-shrink-0 p-4 border-t border-gray-800">
+          <div className="flex items-center gap-3 text-sm">
+            <div className="w-10 h-10 bg-gradient-to-br from-green-500/20 to-blue-500/20 rounded-full flex items-center justify-center border border-green-500/30 flex-shrink-0">
+              <span className="text-green-400 font-semibold text-sm">
+                {user?.fullName?.charAt(0)?.toUpperCase() || 'U'}
+              </span>
             </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-white text-sm font-medium truncate">
+                {user?.fullName || 'User'}
+              </p>
+              <p className="text-gray-500 text-xs truncate">
+                {user?.email || 'user@email.com'}
+              </p>
+            </div>
+            <button
+              onClick={handleLogout}
+              className="p-2 rounded-lg text-gray-400 hover:text-red-400 hover:bg-red-500/10 transition-all flex-shrink-0"
+              title="Logout"
+            >
+              <ArrowRightOnRectangleIcon className="w-4 h-4" />
+            </button>
           </div>
-        </aside>
+        </div>
+      </aside>
 
-        {/* MAIN CONTENT — NO overflow-y-auto, let body scroll */}
-        <main className="flex-1 min-w-0 p-4 md:p-6">
+      {/* Mobile overlay (only shows on mobile when drawer is open) */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 z-20 bg-black/60 backdrop-blur-sm md:hidden"
+          onClick={closeSidebar}
+        />
+      )}
+
+      {/* ============ MAIN CONTENT ============ */}
+      {/* ml-72 on desktop so it doesn't sit under the fixed sidebar. */}
+      {/* mt-16 so it doesn't sit under the fixed header. */}
+      <main className="md:ml-72 pt-16">
+        <div className="p-4 md:p-6">
           <div className="max-w-6xl mx-auto">
             <Outlet />
           </div>
-        </main>
-      </div>
-
-      <Footer />
+        </div>
+        <Footer />
+      </main>
     </div>
   );
 };
