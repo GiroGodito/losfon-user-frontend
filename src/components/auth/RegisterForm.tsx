@@ -1674,13 +1674,21 @@ export const RegisterForm = () => {
       setTouchedFields((prev) => ({ ...prev, [field]: true }));
     });
 
-    // ✅ NEW: Show the specific password message in the toast too, so the user
-    //    sees it even if they scrolled past the field.
-    if (newBackendErrors.password) {
-      showToast(newBackendErrors.password, 'error');
-    } else {
-      showToast('Please fix the highlighted fields.', 'error');
-    }
+    // // ✅ NEW: Show the specific password message in the toast too, so the user
+    // //    sees it even if they scrolled past the field.
+    // if (newBackendErrors.password) {
+    //   showToast(newBackendErrors.password, 'error');
+    // } else {
+    //   showToast('Please fix the highlighted fields.', 'error');
+    // }
+
+        // ✅ NEW: Show the specific backend message for any field that was
+    //    flagged, so the user sees exactly what went wrong (e.g. "Email
+    //    is already registered") instead of a generic prompt.
+    const firstMessage = Object.values(newBackendErrors).find(
+      (msg): msg is string => typeof msg === 'string' && msg.length > 0
+    );
+    showToast(firstMessage || 'Please fix the highlighted fields.', 'error');
   } else {
     const backendMessage: string = (error?.message || '').toString();
     const lower = backendMessage.toLowerCase();
