@@ -1688,7 +1688,7 @@ export const RegisterForm = () => {
     const firstMessage = Object.values(newBackendErrors).find(
       (msg): msg is string => typeof msg === 'string' && msg.length > 0
     );
-    showToast(firstMessage || 'Please fix the highlighted fields.', 'error');
+    // showToast(firstMessage || 'Please fix the highlighted fields.', 'error');
   } else {
     const backendMessage: string = (error?.message || '').toString();
     const lower = backendMessage.toLowerCase();
