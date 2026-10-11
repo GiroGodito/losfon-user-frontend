@@ -1560,42 +1560,140 @@ export const RegisterForm = () => {
       await register(formData);
       showToast('Registration successful! 🎉', 'success');
       navigate('/dashboard');
+      // LAST WORKING IMPLEMENTATION
+    // } catch (error: any) {
+    //   console.error('❌ Registration error:', error);
+    //   const backendMessage: string = (error?.message || '').toString();
+    //   const lower = backendMessage.toLowerCase();
+
+    //   const newBackendErrors: FieldErrors = {};
+    //   let mapped = false;
+
+    //   if (lower.includes('email')) {
+    //     newBackendErrors.email = backendMessage || 'Please enter a valid email address.';
+    //     mapped = true;
+    //   }
+    //   if (lower.includes('phone') || lower.includes('contact')) {
+    //     newBackendErrors.contactNumber = backendMessage || 'Please enter a valid contact number.';
+    //     mapped = true;
+    //   }
+    //   if (lower.includes('password')) {
+    //     newBackendErrors.password = backendMessage || 'Please enter a valid password.';
+    //     mapped = true;
+    //   }
+    //   if (lower.includes('name')) {
+    //     newBackendErrors.fullName = backendMessage || 'Please enter a valid full name.';
+    //     mapped = true;
+    //   }
+
+    //   if (mapped) {
+    //     setFieldErrors((prev) => ({ ...prev, ...newBackendErrors }));
+    //     showToast('Please fix the highlighted fields.', 'error');
+    //   } else if (backendMessage && !lower.includes('validation errors occurred')) {
+    //     showToast(backendMessage, 'error');
+    //   } else {
+    //     showToast('Registration failed. Please check your details and try again.', 'error');
+    //   }
+    // } finally {
+    //   setIsLoading(false);
+    // }
+
     } catch (error: any) {
-      console.error('❌ Registration error:', error);
-      const backendMessage: string = (error?.message || '').toString();
-      const lower = backendMessage.toLowerCase();
+  console.error('❌ Registration error:', error);
 
-      const newBackendErrors: FieldErrors = {};
-      let mapped = false;
+  // ✅ NEW: Pull the ASP.NET Core validation dictionary if present.
+  //    Shape: { Password: ["Password is too common. ..."], Email: [...] }
+  const validationDict: Record<string, string[]> | undefined = error?.errors;
 
-      if (lower.includes('email')) {
-        newBackendErrors.email = backendMessage || 'Please enter a valid email address.';
-        mapped = true;
-      }
-      if (lower.includes('phone') || lower.includes('contact')) {
-        newBackendErrors.contactNumber = backendMessage || 'Please enter a valid contact number.';
-        mapped = true;
-      }
-      if (lower.includes('password')) {
-        newBackendErrors.password = backendMessage || 'Please enter a valid password.';
-        mapped = true;
-      }
-      if (lower.includes('name')) {
-        newBackendErrors.fullName = backendMessage || 'Please enter a valid full name.';
-        mapped = true;
-      }
+  const newBackendErrors: FieldErrors = {};
+  let mapped = false;
 
-      if (mapped) {
-        setFieldErrors((prev) => ({ ...prev, ...newBackendErrors }));
-        showToast('Please fix the highlighted fields.', 'error');
-      } else if (backendMessage && !lower.includes('validation errors occurred')) {
-        showToast(backendMessage, 'error');
-      } else {
-        showToast('Registration failed. Please check your details and try again.', 'error');
+  if (validationDict && typeof validationDict === 'object') {
+    // Map each backend field name → the matching frontend field name
+    const fieldMap: Record<string, FieldName> = {
+      Email: 'email',
+      FullName: 'fullName',
+      ContactNumber: 'contactNumber',
+      Password: 'password',
+      ConfirmPassword: 'confirmPassword',
+      // In case backend lower-cases them
+      email: 'email',
+      fullName: 'fullName',
+      contactNumber: 'contactNumber',
+      password: 'password',
+      confirmPassword: 'confirmPassword',
+    };
+
+    Object.entries(validationDict).forEach(([backendField, messages]) => {
+      const frontendField = fieldMap[backendField];
+      if (frontendField && messages && messages.length > 0) {
+        // Use the first message from the backend (most specific)
+        newBackendErrors[frontendField] = messages[0];
+        mapped = true;
       }
-    } finally {
-      setIsLoading(false);
+    });
+  }
+
+  // Fallback: if there's no structured dict (e.g., BusinessRuleException),
+  // do the old keyword-sniff on the message.
+  if (!mapped) {
+    const backendMessage: string = (error?.message || '').toString();
+    const lower = backendMessage.toLowerCase();
+
+    if (lower.includes('password')) {
+      newBackendErrors.password = backendMessage || 'Please enter a valid password.';
+      mapped = true;
     }
+    if (lower.includes('email')) {
+      newBackendErrors.email = backendMessage || 'Please enter a valid email address.';
+      mapped = true;
+    }
+    if (lower.includes('phone') || lower.includes('contact')) {
+      newBackendErrors.contactNumber = backendMessage || 'Please enter a valid contact number.';
+      mapped = true;
+    }
+    if (lower.includes('name')) {
+      newBackendErrors.fullName = backendMessage || 'Please enter a valid full name.';
+      mapped = true;
+    }
+  }
+
+  // Apply and decide on the toast
+  if (mapped) {
+    setFieldErrors((prev) => ({ ...prev, ...newBackendErrors }));
+
+    // ✅ NEW: If the backend flagged the password, force it into a "touched" state
+    //    so the red border + inline error render immediately even if the user
+    //    never blurred the field.
+    if (newBackendErrors.password) {
+      setTouchedFields((prev) => ({ ...prev, password: true }));
+      setFocusedField('password');
+    }
+    // Same treatment for any other field the backend complained about
+    (Object.keys(newBackendErrors) as FieldName[]).forEach((field) => {
+      setTouchedFields((prev) => ({ ...prev, [field]: true }));
+    });
+
+    // ✅ NEW: Show the specific password message in the toast too, so the user
+    //    sees it even if they scrolled past the field.
+    if (newBackendErrors.password) {
+      showToast(newBackendErrors.password, 'error');
+    } else {
+      showToast('Please fix the highlighted fields.', 'error');
+    }
+  } else {
+    const backendMessage: string = (error?.message || '').toString();
+    const lower = backendMessage.toLowerCase();
+
+    if (backendMessage && !lower.includes('validation errors occurred')) {
+      showToast(backendMessage, 'error');
+    } else {
+      showToast('Registration failed. Please check your details and try again.', 'error');
+    }
+  }
+} finally {
+  setIsLoading(false);
+}
   };
 
   // ─────────────────────────────────────────────────────────
@@ -1850,9 +1948,19 @@ export const RegisterForm = () => {
                   )}
                 </div>
               )}
-              {/* Only show the field-level error text for password if the checklist
-                  isn't taking over the messaging — keep as-is for consistency. */}
-              {/* {renderFieldError('password')} */}
+            
+              {/* Show a backend password error (e.g. "Password is too common") as an
+    extra line under the checklist. Safe because validators only produce
+    complexity messages the checklist doesn't cover. */}
+{isFieldActive('password') &&
+  fieldErrors.password &&
+  !isPasswordValid && (
+    <p className="mt-1.5 text-xs text-red-400 flex items-center gap-1">
+      <ExclamationCircleIcon className="w-3.5 h-3.5 flex-shrink-0" />
+      {fieldErrors.password}
+    </p>
+  )}
+              
             </div>
 
             {/* ───────────── Confirm Password ───────────── */}

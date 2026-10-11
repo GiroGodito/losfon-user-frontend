@@ -25,6 +25,7 @@ export interface ApiError {
   code?: string;
   timestamp: string;
   retryAfter?: number;
+  errors?: Record<string, string[]>;  // ✅ NEW (REMOVE TO GO BACK TO LAST WORKING IMPLEMENTATION)
 }
 
 // ✅ Store fingerprint globally (generated once)
@@ -125,13 +126,42 @@ export async function apiFetch<T = any>(
       let errorCode = undefined;
       let retryAfter = undefined;
       
+      //LAST WORKING IMPLEMENTATION
+      // if (data && typeof data === 'object') {
+      //   errorMessage = data.message || data.error || data.title || response.statusText || 'An error occurred';
+      //   errorType = data.type || data.errorType || 'UnknownError';
+      //   errorCode = data.code || data.errorCode;
+      // } else if (typeof data === 'string' && data.length > 0) {
+      //   errorMessage = data;
+      // }
+
+
       if (data && typeof data === 'object') {
-        errorMessage = data.message || data.error || data.title || response.statusText || 'An error occurred';
-        errorType = data.type || data.errorType || 'UnknownError';
-        errorCode = data.code || data.errorCode;
-      } else if (typeof data === 'string' && data.length > 0) {
-        errorMessage = data;
-      }
+  errorMessage = data.message || data.error || data.title || response.statusText || 'An error occurred';
+  errorType = data.type || data.errorType || 'UnknownError';
+  errorCode = data.code || data.errorCode;
+
+  // ✅ NEW: Preserve ASP.NET Core ValidationProblemDetails `errors` dict
+  //    and also hoist the first field error into `message` so callers can read it.
+  if (data.errors && typeof data.errors === 'object') {
+    // Attach the raw dict to the error object
+    (errorCode as any); // (keep existing assignment untouched)
+
+    // Attach to a variable we'll use below
+    var validationErrors: Record<string, string[]> = data.errors;
+
+    // If there are field errors, prefer the first one as the human-readable message
+    const firstField = Object.keys(validationErrors)[0];
+    if (firstField && validationErrors[firstField]?.length > 0) {
+      errorMessage = validationErrors[firstField][0];
+    }
+  }
+}
+
+
+
+
+
 
       // ✅ HANDLE RATE LIMITING (429)
       if (response.status === 429) {
@@ -145,15 +175,36 @@ export async function apiFetch<T = any>(
         }
       }
       
-      const error: ApiError = {
-        status: response.status,
-        type: errorType,
-        message: errorMessage,
-        code: errorCode,
-        timestamp: data?.timestamp || new Date().toISOString(),
-        retryAfter,
-      };
-      throw error;
+      //LAST WORKING IMPLEMENTATION
+      // const error: ApiError = {
+      //   status: response.status,
+      //   type: errorType,
+      //   message: errorMessage,
+      //   code: errorCode,
+      //   timestamp: data?.timestamp || new Date().toISOString(),
+      //   retryAfter,
+      // };
+      // throw error;
+
+      const error: ApiError & { errors?: Record<string, string[]> } = {
+  status: response.status,
+  type: errorType,
+  message: errorMessage,
+  code: errorCode,
+  timestamp: data?.timestamp || new Date().toISOString(),
+  retryAfter,
+};
+
+// ✅ NEW: Carry the field-level errors through to the caller
+if (data && typeof data === 'object' && data.errors && typeof data.errors === 'object') {
+  error.errors = data.errors as Record<string, string[]>;
+}
+
+throw error;
+
+
+
+
     }
 
     return data;
