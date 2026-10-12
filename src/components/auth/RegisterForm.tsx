@@ -1960,14 +1960,14 @@ export const RegisterForm = () => {
               {/* Show a backend password error (e.g. "Password is too common") as an
     extra line under the checklist. Safe because validators only produce
     complexity messages the checklist doesn't cover. */}
-{isFieldActive('password') &&
+{/* {isFieldActive('password') &&
   fieldErrors.password &&
   !isPasswordValid && (
     <p className="mt-1.5 text-xs text-red-400 flex items-center gap-1">
       <ExclamationCircleIcon className="w-3.5 h-3.5 flex-shrink-0" />
       {fieldErrors.password}
     </p>
-  )}
+  )} */}
               
             </div>
 
