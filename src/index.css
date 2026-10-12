@@ -98,3 +98,19 @@ code {
   padding: 4px 8px;
   background: var(--code-bg);
 }
+
+/* ============================================
+   Hide Microsoft Edge's native password reveal
+   button (the built-in eye icon) so it doesn't
+   appear alongside our custom one.
+   
+   Edge injects this via ::-ms-reveal.
+   Chrome does not have this, so this rule is
+   a no-op there.
+   ============================================ */
+input[type="password"]::-ms-reveal,
+input[type="password"]::-ms-clear {
+  display: none;
+  width: 0;
+  height: 0;
+}
