@@ -1948,12 +1948,12 @@ export const RegisterForm = () => {
                     {renderPasswordCheck('One number', passwordChecks.number)}
                     {renderPasswordCheck('One special character', passwordChecks.special)}
                   </ul>
-                  {isPasswordValid && (
+                  {/* {isPasswordValid && (
                     <p className="text-xs text-green-400 mt-1.5 flex items-center gap-1">
                       <CheckIcon className="w-3.5 h-3.5" />
                       Strong password! ✓
                     </p>
-                  )}
+                  )} */}
                 </div>
               )}
             
