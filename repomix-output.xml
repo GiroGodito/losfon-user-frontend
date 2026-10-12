@@ -5828,6 +5828,22 @@ code {
   padding: 4px 8px;
   background: var(--code-bg);
 }
+
+/* ============================================
+   Hide Microsoft Edge's native password reveal
+   button (the built-in eye icon) so it doesn't
+   appear alongside our custom one.
+   
+   Edge injects this via ::-ms-reveal.
+   Chrome does not have this, so this rule is
+   a no-op there.
+   ============================================ */
+input[type="password"]::-ms-reveal,
+input[type="password"]::-ms-clear {
+  display: none;
+  width: 0;
+  height: 0;
+}
 </file>
 
 <file path="src/main.tsx">
@@ -7047,227 +7063,6 @@ export async function getDeviceFingerprint(): Promise<DeviceFingerprint> {
 }
 </file>
 
-<file path="src/api/client.ts">
-// src/api/client.ts
-
-import type { DeviceFingerprint } from '../utils/fingerprint';
-
-const API_BASE_URL = '/api';
-
-export interface ApiResponse<T = any> {
-  success: boolean;
-  data?: T;
-  message?: string;
-  pagination?: {
-    page: number;
-    pageSize: number;
-    totalCount: number;
-    totalPages: number;
-    hasPreviousPage: boolean;
-    hasNextPage: boolean;
-  };
-}
-
-export interface ApiError {
-  status: number;
-  type: string;
-  message: string;
-  code?: string;
-  timestamp: string;
-  retryAfter?: number;
-}
-
-// ✅ Store fingerprint globally (generated once)
-let deviceFingerprint: DeviceFingerprint | null = null;
-
-// ✅ Function to get or generate fingerprint
-async function getDeviceFingerprintHeaders(): Promise<Record<string, string>> {
-  if (!deviceFingerprint) {
-    try {
-      // Dynamic import to avoid circular dependency
-      const { getDeviceFingerprint } = await import('../utils/fingerprint');
-      deviceFingerprint = await getDeviceFingerprint();
-      console.log('✅ Device fingerprint generated:', {
-        canvasLength: deviceFingerprint.canvas.length,
-        userAgent: deviceFingerprint.userAgent.substring(0, 50) + '...',
-        screenResolution: deviceFingerprint.screenResolution,
-        timezone: deviceFingerprint.timezone,
-        touchSupport: deviceFingerprint.touchSupport,
-      });
-    } catch (error) {
-      console.warn('Failed to generate device fingerprint:', error);
-      return {};
-    }
-  }
-  
-  return {
-    'X-Canvas-Fingerprint': deviceFingerprint.canvas || '',
-    'X-User-Agent': deviceFingerprint.userAgent || '',
-    'X-Accept-Language': deviceFingerprint.language || '',
-    'X-Screen-Resolution': deviceFingerprint.screenResolution || '',
-    'X-Timezone': deviceFingerprint.timezone || '',
-    'X-Color-Depth': String(deviceFingerprint.colorDepth || 0),
-    'X-Touch-Support': String(deviceFingerprint.touchSupport || false),
-  };
-}
-
-export async function apiFetch<T = any>(
-  endpoint: string,
-  options: RequestInit = {}
-): Promise<T> {
-  const url = `${API_BASE_URL}${endpoint}`;
-
-  const headers: Record<string, string> = {
-    'Accept': 'application/json',
-  };
-
-  // ✅ Add fingerprint headers for auth endpoints
-  const isAuthEndpoint = endpoint.includes('/login') || endpoint.includes('/register');
-  if (isAuthEndpoint) {
-    const fingerprintHeaders = await getDeviceFingerprintHeaders();
-    Object.assign(headers, fingerprintHeaders);
-  }
-
-  if (options.headers) {
-    const existingHeaders = options.headers as Record<string, string>;
-    Object.keys(existingHeaders).forEach(key => {
-      headers[key] = existingHeaders[key];
-    });
-  }
-
-  if (options.body && !(options.body instanceof FormData)) {
-    headers['Content-Type'] = 'application/json';
-  }
-
-  const fetchOptions: RequestInit = {
-    ...options,
-    headers: headers as HeadersInit,
-    credentials: 'include',
-    mode: 'cors',
-    cache: 'no-store',
-  };
-
-  try {
-    const response = await fetch(url, fetchOptions);
-
-    if (response.status === 204) {
-      return {} as T;
-    }
-
-    const contentType = response.headers.get('content-type') || '';
-    let data: any;
-
-    if (contentType.includes('application/json')) {
-      data = await response.json();
-    } else if (contentType.includes('text/')) {
-      data = await response.text();
-    } else {
-      try {
-        data = await response.json();
-      } catch {
-        data = await response.text();
-      }
-    }
-
-    if (!response.ok) {
-      let errorMessage = response.statusText || 'An error occurred';
-      let errorType = 'UnknownError';
-      let errorCode = undefined;
-      let retryAfter = undefined;
-      
-      if (data && typeof data === 'object') {
-        errorMessage = data.message || data.error || data.title || response.statusText || 'An error occurred';
-        errorType = data.type || data.errorType || 'UnknownError';
-        errorCode = data.code || data.errorCode;
-      } else if (typeof data === 'string' && data.length > 0) {
-        errorMessage = data;
-      }
-
-      // ✅ HANDLE RATE LIMITING (429)
-      if (response.status === 429) {
-        errorType = 'RateLimitError';
-        const retryAfterHeader = response.headers.get('Retry-After');
-        if (retryAfterHeader) {
-          retryAfter = parseInt(retryAfterHeader, 10);
-        }
-        if (data?.retryAfter) {
-          retryAfter = data.retryAfter;
-        }
-      }
-      
-      const error: ApiError = {
-        status: response.status,
-        type: errorType,
-        message: errorMessage,
-        code: errorCode,
-        timestamp: data?.timestamp || new Date().toISOString(),
-        retryAfter,
-      };
-      throw error;
-    }
-
-    return data;
-  } catch (error) {
-    if (error instanceof TypeError && error.message === 'Failed to fetch') {
-      throw {
-        status: 0,
-        type: 'NetworkError',
-        message: 'Unable to connect to the server. Please check if the backend is running.',
-        timestamp: new Date().toISOString(),
-      } as ApiError;
-    }
-    
-    if (error instanceof Error && error.message.includes('fetch')) {
-      throw {
-        status: 0,
-        type: 'NetworkError',
-        message: 'Network error. Please check your internet connection.',
-        timestamp: new Date().toISOString(),
-      } as ApiError;
-    }
-
-    if ((error as ApiError).status !== undefined) {
-      throw error;
-    }
-
-    throw {
-      status: 0,
-      type: 'UnknownError',
-      message: error instanceof Error ? error.message : 'An unexpected error occurred',
-      timestamp: new Date().toISOString(),
-    } as ApiError;
-  }
-}
-
-export const api = {
-  get: <T>(endpoint: string, options?: RequestInit): Promise<T> =>
-    apiFetch<T>(endpoint, { ...options, method: 'GET' }),
-  post: <T>(endpoint: string, body?: any, options?: RequestInit): Promise<T> =>
-    apiFetch<T>(endpoint, {
-      ...options,
-      method: 'POST',
-      body: body instanceof FormData ? body : JSON.stringify(body),
-    }),
-  put: <T>(endpoint: string, body?: any, options?: RequestInit): Promise<T> =>
-    apiFetch<T>(endpoint, {
-      ...options,
-      method: 'PUT',
-      body: body instanceof FormData ? body : JSON.stringify(body),
-    }),
-  patch: <T>(endpoint: string, body?: any, options?: RequestInit): Promise<T> =>
-    apiFetch<T>(endpoint, {
-      ...options,
-      method: 'PATCH',
-      body: body instanceof FormData ? body : JSON.stringify(body),
-    }),
-  delete: <T>(endpoint: string, options?: RequestInit): Promise<T> =>
-    apiFetch<T>(endpoint, { ...options, method: 'DELETE' }),
-};
-
-// ✅ DEFAULT EXPORT
-export default api;
-</file>
-
 <file path="src/components/auth/LoginForm.tsx">
 // // src/components/auth/LoginForm.tsx
 // import React, { useState } from 'react';
@@ -7791,6 +7586,788 @@ export const LoginForm = () => {
 };
 
 export default LoginForm;
+</file>
+
+<file path="src/api/client.ts">
+// src/api/client.ts
+
+import type { DeviceFingerprint } from '../utils/fingerprint';
+
+const API_BASE_URL = '/api';
+
+export interface ApiResponse<T = any> {
+  success: boolean;
+  data?: T;
+  message?: string;
+  pagination?: {
+    page: number;
+    pageSize: number;
+    totalCount: number;
+    totalPages: number;
+    hasPreviousPage: boolean;
+    hasNextPage: boolean;
+  };
+}
+
+export interface ApiError {
+  status: number;
+  type: string;
+  message: string;
+  code?: string;
+  timestamp: string;
+  retryAfter?: number;
+  errors?: Record<string, string[]>;  // ✅ NEW (REMOVE TO GO BACK TO LAST WORKING IMPLEMENTATION)
+}
+
+// ✅ Store fingerprint globally (generated once)
+let deviceFingerprint: DeviceFingerprint | null = null;
+
+// ✅ Function to get or generate fingerprint
+async function getDeviceFingerprintHeaders(): Promise<Record<string, string>> {
+  if (!deviceFingerprint) {
+    try {
+      // Dynamic import to avoid circular dependency
+      const { getDeviceFingerprint } = await import('../utils/fingerprint');
+      deviceFingerprint = await getDeviceFingerprint();
+      console.log('✅ Device fingerprint generated:', {
+        canvasLength: deviceFingerprint.canvas.length,
+        userAgent: deviceFingerprint.userAgent.substring(0, 50) + '...',
+        screenResolution: deviceFingerprint.screenResolution,
+        timezone: deviceFingerprint.timezone,
+        touchSupport: deviceFingerprint.touchSupport,
+      });
+    } catch (error) {
+      console.warn('Failed to generate device fingerprint:', error);
+      return {};
+    }
+  }
+  
+  return {
+    'X-Canvas-Fingerprint': deviceFingerprint.canvas || '',
+    'X-User-Agent': deviceFingerprint.userAgent || '',
+    'X-Accept-Language': deviceFingerprint.language || '',
+    'X-Screen-Resolution': deviceFingerprint.screenResolution || '',
+    'X-Timezone': deviceFingerprint.timezone || '',
+    'X-Color-Depth': String(deviceFingerprint.colorDepth || 0),
+    'X-Touch-Support': String(deviceFingerprint.touchSupport || false),
+  };
+}
+
+export async function apiFetch<T = any>(
+  endpoint: string,
+  options: RequestInit = {}
+): Promise<T> {
+  const url = `${API_BASE_URL}${endpoint}`;
+
+  const headers: Record<string, string> = {
+    'Accept': 'application/json',
+  };
+
+  // ✅ Add fingerprint headers for auth endpoints
+  const isAuthEndpoint = endpoint.includes('/login') || endpoint.includes('/register');
+  if (isAuthEndpoint) {
+    const fingerprintHeaders = await getDeviceFingerprintHeaders();
+    Object.assign(headers, fingerprintHeaders);
+  }
+
+  if (options.headers) {
+    const existingHeaders = options.headers as Record<string, string>;
+    Object.keys(existingHeaders).forEach(key => {
+      headers[key] = existingHeaders[key];
+    });
+  }
+
+  if (options.body && !(options.body instanceof FormData)) {
+    headers['Content-Type'] = 'application/json';
+  }
+
+  const fetchOptions: RequestInit = {
+    ...options,
+    headers: headers as HeadersInit,
+    credentials: 'include',
+    mode: 'cors',
+    cache: 'no-store',
+  };
+
+  try {
+    const response = await fetch(url, fetchOptions);
+
+    if (response.status === 204) {
+      return {} as T;
+    }
+
+    const contentType = response.headers.get('content-type') || '';
+    let data: any;
+
+    if (contentType.includes('application/json')) {
+      data = await response.json();
+    } else if (contentType.includes('text/')) {
+      data = await response.text();
+    } else {
+      try {
+        data = await response.json();
+      } catch {
+        data = await response.text();
+      }
+    }
+
+    if (!response.ok) {
+      let errorMessage = response.statusText || 'An error occurred';
+      let errorType = 'UnknownError';
+      let errorCode = undefined;
+      let retryAfter = undefined;
+      
+      //LAST WORKING IMPLEMENTATION
+      // if (data && typeof data === 'object') {
+      //   errorMessage = data.message || data.error || data.title || response.statusText || 'An error occurred';
+      //   errorType = data.type || data.errorType || 'UnknownError';
+      //   errorCode = data.code || data.errorCode;
+      // } else if (typeof data === 'string' && data.length > 0) {
+      //   errorMessage = data;
+      // }
+
+
+      if (data && typeof data === 'object') {
+  errorMessage = data.message || data.error || data.title || response.statusText || 'An error occurred';
+  errorType = data.type || data.errorType || 'UnknownError';
+  errorCode = data.code || data.errorCode;
+
+  // ✅ NEW: Preserve ASP.NET Core ValidationProblemDetails `errors` dict
+  //    and also hoist the first field error into `message` so callers can read it.
+  if (data.errors && typeof data.errors === 'object') {
+    // Attach the raw dict to the error object
+    (errorCode as any); // (keep existing assignment untouched)
+
+    // Attach to a variable we'll use below
+    var validationErrors: Record<string, string[]> = data.errors;
+
+    // If there are field errors, prefer the first one as the human-readable message
+    const firstField = Object.keys(validationErrors)[0];
+    if (firstField && validationErrors[firstField]?.length > 0) {
+      errorMessage = validationErrors[firstField][0];
+    }
+  }
+}
+
+
+
+
+
+
+      // ✅ HANDLE RATE LIMITING (429)
+      if (response.status === 429) {
+        errorType = 'RateLimitError';
+        const retryAfterHeader = response.headers.get('Retry-After');
+        if (retryAfterHeader) {
+          retryAfter = parseInt(retryAfterHeader, 10);
+        }
+        if (data?.retryAfter) {
+          retryAfter = data.retryAfter;
+        }
+      }
+      
+      //LAST WORKING IMPLEMENTATION
+      // const error: ApiError = {
+      //   status: response.status,
+      //   type: errorType,
+      //   message: errorMessage,
+      //   code: errorCode,
+      //   timestamp: data?.timestamp || new Date().toISOString(),
+      //   retryAfter,
+      // };
+      // throw error;
+
+      const error: ApiError & { errors?: Record<string, string[]> } = {
+  status: response.status,
+  type: errorType,
+  message: errorMessage,
+  code: errorCode,
+  timestamp: data?.timestamp || new Date().toISOString(),
+  retryAfter,
+};
+
+// ✅ NEW: Carry the field-level errors through to the caller
+if (data && typeof data === 'object' && data.errors && typeof data.errors === 'object') {
+  error.errors = data.errors as Record<string, string[]>;
+}
+
+throw error;
+
+
+
+
+    }
+
+    return data;
+  } catch (error) {
+    if (error instanceof TypeError && error.message === 'Failed to fetch') {
+      throw {
+        status: 0,
+        type: 'NetworkError',
+        message: 'Unable to connect to the server. Please check if the backend is running.',
+        timestamp: new Date().toISOString(),
+      } as ApiError;
+    }
+    
+    if (error instanceof Error && error.message.includes('fetch')) {
+      throw {
+        status: 0,
+        type: 'NetworkError',
+        message: 'Network error. Please check your internet connection.',
+        timestamp: new Date().toISOString(),
+      } as ApiError;
+    }
+
+    if ((error as ApiError).status !== undefined) {
+      throw error;
+    }
+
+    throw {
+      status: 0,
+      type: 'UnknownError',
+      message: error instanceof Error ? error.message : 'An unexpected error occurred',
+      timestamp: new Date().toISOString(),
+    } as ApiError;
+  }
+}
+
+export const api = {
+  get: <T>(endpoint: string, options?: RequestInit): Promise<T> =>
+    apiFetch<T>(endpoint, { ...options, method: 'GET' }),
+  post: <T>(endpoint: string, body?: any, options?: RequestInit): Promise<T> =>
+    apiFetch<T>(endpoint, {
+      ...options,
+      method: 'POST',
+      body: body instanceof FormData ? body : JSON.stringify(body),
+    }),
+  put: <T>(endpoint: string, body?: any, options?: RequestInit): Promise<T> =>
+    apiFetch<T>(endpoint, {
+      ...options,
+      method: 'PUT',
+      body: body instanceof FormData ? body : JSON.stringify(body),
+    }),
+  patch: <T>(endpoint: string, body?: any, options?: RequestInit): Promise<T> =>
+    apiFetch<T>(endpoint, {
+      ...options,
+      method: 'PATCH',
+      body: body instanceof FormData ? body : JSON.stringify(body),
+    }),
+  delete: <T>(endpoint: string, options?: RequestInit): Promise<T> =>
+    apiFetch<T>(endpoint, { ...options, method: 'DELETE' }),
+};
+
+// ✅ DEFAULT EXPORT
+export default api;
+</file>
+
+<file path="src/components/layout/DashboardLayout.tsx">
+// // src/components/layout/DashboardLayout.tsx
+// import React, { useState, useEffect } from 'react';
+// import { Outlet, useNavigate } from 'react-router-dom';
+// import { Header } from './Header';
+// import { Footer } from './Footer';
+// import { Navigation } from './Navigation';
+// import {Button} from './../common/Button';
+// import { 
+//   XMarkIcon,
+//   ArrowRightOnRectangleIcon
+// } from '@heroicons/react/24/outline';
+// import { useAuth } from '../../context/AuthContext';
+
+// export const DashboardLayout: React.FC = () => {
+//   const [sidebarOpen, setSidebarOpen] = useState(false);
+//   const { user, logout } = useAuth();
+//   const navigate = useNavigate();
+
+//   // Close sidebar on escape key
+//   useEffect(() => {
+//     const handleEscape = (e: KeyboardEvent) => {
+//       if (e.key === 'Escape' && sidebarOpen) {
+//         setSidebarOpen(false);
+//       }
+//     };
+//     window.addEventListener('keydown', handleEscape);
+//     return () => window.removeEventListener('keydown', handleEscape);
+//   }, [sidebarOpen]);
+
+//   // Prevent body scroll when sidebar is open on mobile
+//   useEffect(() => {
+//     if (sidebarOpen) {
+//       document.body.style.overflow = 'hidden';
+//     } else {
+//       document.body.style.overflow = 'unset';
+//     }
+//     return () => {
+//       document.body.style.overflow = 'unset';
+//     };
+//   }, [sidebarOpen]);
+
+//   const toggleSidebar = () => setSidebarOpen(!sidebarOpen);
+//   const closeSidebar = () => setSidebarOpen(false);
+
+//   const handleLogout = async () => {
+//     await logout();
+//     navigate('/login');
+//   };
+
+//   return (
+//     <div className="min-h-screen flex flex-col bg-gradient-to-br from-gray-900 via-gray-800 to-black">
+//       <Header onMenuToggle={toggleSidebar} />
+
+//       <div className="flex flex-1 overflow-hidden">
+//         {/* Mobile Sidebar Overlay */}
+//         {sidebarOpen && (
+//           <div 
+//             className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm md:hidden animate-fade-in"
+//             onClick={closeSidebar}
+//           />
+//         )}
+
+//         {/* Sidebar */}
+//         <aside className={`
+//           fixed md:sticky top-0 z-40 h-screen w-72 bg-gray-900/95 backdrop-blur-sm border-r border-gray-800
+//           transition-transform duration-300 ease-in-out
+//           ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+//           flex flex-col shadow-2xl
+//         `}>
+//           {/* ✅ NO HEADER AT ALL - Just the close button floating */}
+//           {/* Mobile Close Button - Floating in top-right corner */}
+//           <Button
+//             onClick={closeSidebar}
+//             className="md:hidden absolute top-4 right-4 z-50 p-2 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-all"
+//             aria-label="Close menu"
+//             variant="glass-grey"
+//           >
+//             <XMarkIcon className="w-6 h-6" />
+//           </Button>
+
+//           {/* Navigation - Full height with padding for close button */}
+//           <div className="flex-1 overflow-y-auto pt-4 px-3 pb-3">
+//             <Navigation onItemClick={closeSidebar} />
+//           </div>
+
+//           {/* Sidebar Footer - User info with logout */}
+//           <div className="p-4 border-t border-gray-800">
+//             <div className="flex items-center gap-3 text-sm">
+//               <div className="w-10 h-10 bg-gradient-to-br from-green-500/20 to-blue-500/20 rounded-full flex items-center justify-center border border-green-500/30 flex-shrink-0">
+//                 <span className="text-green-400 font-semibold text-sm">
+//                   {user?.fullName?.charAt(0)?.toUpperCase() || 'U'}
+//                 </span>
+//               </div>
+//               <div className="flex-1 min-w-0">
+//                 <p className="text-white text-sm font-medium truncate">
+//                   {user?.fullName || 'User'}
+//                 </p>
+//                 <p className="text-gray-500 text-xs truncate">
+//                   {user?.email || 'user@email.com'}
+//                 </p>
+//               </div>
+//               <button
+//                 onClick={handleLogout}
+//                 className="p-2 rounded-lg text-gray-400 hover:text-red-400 hover:bg-red-500/10 transition-all flex-shrink-0"
+//                 title="Logout"
+//               >
+//                 <ArrowRightOnRectangleIcon className="w-4 h-4" />
+//               </button>
+//             </div>
+//           </div>
+//         </aside>
+
+//         {/* Main Content */}
+//         <main className="flex-1 overflow-y-auto p-4 md:p-6">
+//           <div className="max-w-6xl mx-auto">
+//             <Outlet />
+//           </div>
+//         </main>
+//       </div>
+
+//       <Footer />
+//     </div>
+//   );
+// };
+
+
+
+
+
+
+
+
+
+// export default DashboardLayout;
+// src/components/layout/DashboardLayout.tsx
+// import React, { useState, useEffect } from 'react'; 
+// import { Outlet, useNavigate } from 'react-router-dom';
+// import { Header } from './Header';
+// import { Footer } from './Footer';
+// import { Navigation } from './Navigation';
+// import {Button} from './../common/Button';
+// import { 
+//   XMarkIcon,
+//   ArrowRightOnRectangleIcon
+// } from '@heroicons/react/24/outline';
+// import { useAuth } from '../../context/AuthContext';
+
+// export const DashboardLayout: React.FC = () => {
+//   const [sidebarOpen, setSidebarOpen] = useState(false);
+//   const { user, logout } = useAuth();
+//   const navigate = useNavigate();
+
+//   // Close sidebar on escape key
+//   useEffect(() => {
+//     const handleEscape = (e: KeyboardEvent) => {
+//       if (e.key === 'Escape' && sidebarOpen) {
+//         setSidebarOpen(false);
+//       }
+//     };
+//     window.addEventListener('keydown', handleEscape);
+//     return () => window.removeEventListener('keydown', handleEscape);
+//   }, [sidebarOpen]);
+
+//   // Prevent body scroll when sidebar is open on mobile
+//   useEffect(() => {
+//     if (sidebarOpen) {
+//       document.body.style.overflow = 'hidden';
+//     } else {
+//       document.body.style.overflow = 'unset';
+//     }
+//     return () => {
+//       document.body.style.overflow = 'unset';
+//     };
+//   }, [sidebarOpen]);
+
+//   const toggleSidebar = () => setSidebarOpen(!sidebarOpen);
+//   const closeSidebar = () => setSidebarOpen(false);
+
+//   const handleLogout = async () => {
+//     await logout();
+//     navigate('/login');
+//   };
+
+//   return (
+//     <div className="min-h-screen flex flex-col bg-gradient-to-br from-gray-900 via-gray-800 to-black">
+//       <Header onMenuToggle={toggleSidebar} />
+
+//       <div className="flex flex-1 overflow-hidden">
+//         {/* Mobile Sidebar Overlay */}
+//         {sidebarOpen && (
+//           <div 
+//             className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm md:hidden animate-fade-in"
+//             onClick={closeSidebar}
+//           />
+//         )}
+
+//         {/* Sidebar */}
+//         <aside className={`
+//           fixed md:sticky top-0 z-40 h-screen w-72 bg-gray-900/95 backdrop-blur-sm border-r border-gray-800
+//           transition-transform duration-300 ease-in-out
+//           ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+//           flex flex-col shadow-2xl
+//           md:h-[calc(100vh-4rem)]
+//         `}>
+//           {/* Mobile Close Button - Floating in top-right corner */}
+//           <Button
+//             onClick={closeSidebar}
+//             className="md:hidden absolute top-4 right-4 z-50 p-2 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-all"
+//             aria-label="Close menu"
+//             variant="glass-grey"
+//           >
+//             <XMarkIcon className="w-6 h-6" />
+//           </Button>
+
+//           {/* Navigation - Scrollable area */}
+//           <div className="flex-1 min-h-0 overflow-y-auto pt-4 px-3 pb-3">
+//             <Navigation onItemClick={closeSidebar} />
+//           </div>
+
+//           {/* Sidebar Footer - Fixed at bottom, never scrolls */}
+//           <div className="flex-shrink-0 p-4 border-t border-gray-800">
+//             <div className="flex items-center gap-3 text-sm">
+//               <div className="w-10 h-10 bg-gradient-to-br from-green-500/20 to-blue-500/20 rounded-full flex items-center justify-center border border-green-500/30 flex-shrink-0">
+//                 <span className="text-green-400 font-semibold text-sm">
+//                   {user?.fullName?.charAt(0)?.toUpperCase() || 'U'}
+//                 </span>
+//               </div>
+//               <div className="flex-1 min-w-0">
+//                 <p className="text-white text-sm font-medium truncate">
+//                   {user?.fullName || 'User'}
+//                 </p>
+//                 <p className="text-gray-500 text-xs truncate">
+//                   {user?.email || 'user@email.com'}
+//                 </p>
+//               </div>
+//               <button
+//                 onClick={handleLogout}
+//                 className="p-2 rounded-lg text-gray-400 hover:text-red-400 hover:bg-red-500/10 transition-all flex-shrink-0"
+//                 title="Logout"
+//               >
+//                 <ArrowRightOnRectangleIcon className="w-4 h-4" />
+//               </button>
+//             </div>
+//           </div>
+//         </aside>
+
+//         {/* Main Content */}
+//         <main className="flex-1 overflow-y-auto p-4 md:p-6">
+//           <div className="max-w-6xl mx-auto">
+//             <Outlet />
+//           </div>
+//         </main>
+//       </div>
+
+//       <Footer />
+//     </div>
+//   );
+// };
+
+// export default DashboardLayout;
+
+// src/components/layout/DashboardLayout.tsx
+// src/components/layout/DashboardLayout.tsx
+// src/components/layout/DashboardLayout.tsx
+// src/components/layout/DashboardLayout.tsx
+// import React, { useState, useEffect } from 'react';
+// import { Outlet, useNavigate } from 'react-router-dom';
+// import { Header } from './Header';
+// import { Footer } from './Footer';
+// import { Navigation } from './Navigation';
+// import { Button } from './../common/Button';
+// import { XMarkIcon, ArrowRightOnRectangleIcon } from '@heroicons/react/24/outline';
+// import { useAuth } from '../../context/AuthContext';
+
+// export const DashboardLayout: React.FC = () => {
+//   const [sidebarOpen, setSidebarOpen] = useState(false);
+//   const { user, logout } = useAuth();
+//   const navigate = useNavigate();
+
+//   useEffect(() => {
+//     const handleEscape = (e: KeyboardEvent) => {
+//       if (e.key === 'Escape' && sidebarOpen) setSidebarOpen(false);
+//     };
+//     window.addEventListener('keydown', handleEscape);
+//     return () => window.removeEventListener('keydown', handleEscape);
+//   }, [sidebarOpen]);
+
+//   useEffect(() => {
+//     document.body.style.overflow = sidebarOpen ? 'hidden' : 'unset';
+//     return () => {
+//       document.body.style.overflow = 'unset';
+//     };
+//   }, [sidebarOpen]);
+
+//   const toggleSidebar = () => setSidebarOpen(!sidebarOpen);
+//   const closeSidebar = () => setSidebarOpen(false);
+
+//   const handleLogout = async () => {
+//     await logout();
+//     navigate('/login');
+//   };
+
+//   return (
+//     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-black">
+
+//       {/* ============ HEADER (fixed, z-50) ============ */}
+//       <Header onMenuToggle={toggleSidebar} />
+
+//       {/* ============ SIDEBAR — position: fixed on desktop ============ */}
+//       {/* Nothing can scroll this. Ever. */}
+//       <aside
+//         className={`
+//           fixed top-16 bottom-0 left-0 z-30 w-72
+//           bg-gray-900/95 backdrop-blur-sm border-r border-gray-800
+//           transition-transform duration-300 ease-in-out
+//           ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+//           flex flex-col shadow-2xl
+//         `}
+//       >
+//         {/* Mobile close button */}
+//         <Button
+//           onClick={closeSidebar}
+//           className="md:hidden absolute top-4 right-4 z-50 p-2 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-all"
+//           aria-label="Close menu"
+//           variant="glass-grey"
+//         >
+//           <XMarkIcon className="w-6 h-6" />
+//         </Button>
+
+//         {/* Nav list — only this scrolls if it's too tall */}
+//         <div className="flex-1 min-h-0 overflow-y-auto pt-4 px-3 pb-3">
+//           <Navigation onItemClick={closeSidebar} />
+//         </div>
+
+//         {/* Sidebar footer — pinned to bottom of fixed sidebar */}
+//         <div className="flex-shrink-0 p-4 border-t border-gray-800">
+//           <div className="flex items-center gap-3 text-sm">
+//             <div className="w-10 h-10 bg-gradient-to-br from-green-500/20 to-blue-500/20 rounded-full flex items-center justify-center border border-green-500/30 flex-shrink-0">
+//               <span className="text-green-400 font-semibold text-sm">
+//                 {user?.fullName?.charAt(0)?.toUpperCase() || 'U'}
+//               </span>
+//             </div>
+//             <div className="flex-1 min-w-0">
+//               <p className="text-white text-sm font-medium truncate">
+//                 {user?.fullName || 'User'}
+//               </p>
+//               <p className="text-gray-500 text-xs truncate">
+//                 {user?.email || 'user@email.com'}
+//               </p>
+//             </div>
+//             <button
+//               onClick={handleLogout}
+//               className="p-2 rounded-lg text-gray-400 hover:text-red-400 hover:bg-red-500/10 transition-all flex-shrink-0"
+//               title="Logout"
+//             >
+//               <ArrowRightOnRectangleIcon className="w-4 h-4" />
+//             </button>
+//           </div>
+//         </div>
+//       </aside>
+
+//       {/* Mobile overlay (only shows on mobile when drawer is open) */}
+//       {sidebarOpen && (
+//         <div
+//           className="fixed inset-0 z-20 bg-black/60 backdrop-blur-sm md:hidden"
+//           onClick={closeSidebar}
+//         />
+//       )}
+
+//       {/* ============ MAIN CONTENT ============ */}
+//       {/* ml-72 on desktop so it doesn't sit under the fixed sidebar. */}
+//       {/* mt-16 so it doesn't sit under the fixed header. */}
+//       <main className="md:ml-72 pt-16">
+//         <div className="p-4 md:p-6">
+//           <div className="max-w-6xl mx-auto">
+//             <Outlet />
+//           </div>
+//         </div>
+//         <Footer />
+//       </main>
+//     </div>
+//   );
+// };
+
+// export default DashboardLayout;
+// src/components/layout/DashboardLayout.tsx
+import React, { useState, useEffect } from 'react';
+import { Outlet, useNavigate } from 'react-router-dom';
+import { Header } from './Header';
+import { Footer } from './Footer';
+import { Navigation } from './Navigation';
+import { Button } from './../common/Button';
+import { XMarkIcon, ArrowRightOnRectangleIcon } from '@heroicons/react/24/outline';
+import { useAuth } from '../../context/AuthContext';
+
+export const DashboardLayout: React.FC = () => {
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && sidebarOpen) setSidebarOpen(false);
+    };
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [sidebarOpen]);
+
+  useEffect(() => {
+    document.body.style.overflow = sidebarOpen ? 'hidden' : 'unset';
+    return () => {
+      document.body.style.overflow = 'unset';
+    };
+  }, [sidebarOpen]);
+
+  const toggleSidebar = () => setSidebarOpen(!sidebarOpen);
+  const closeSidebar = () => setSidebarOpen(false);
+
+  const handleLogout = async () => {
+    await logout();
+    navigate('/login');
+  };
+
+  return (
+    /* ✅ Outer wrapper: flex column + min-h-screen → footer pins to bottom on short pages */
+    <div className="min-h-screen flex flex-col bg-gradient-to-br from-gray-900 via-gray-800 to-black">
+
+      {/* Header — sticky at top of scroll */}
+      <Header onMenuToggle={toggleSidebar} />
+
+      {/* Sidebar — fixed, out of flow */}
+      <aside
+        className={`
+          fixed top-16 bottom-0 left-0 z-30 w-72
+          bg-gray-900/95 backdrop-blur-sm border-r border-gray-800
+          transition-transform duration-300 ease-in-out
+          ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+          flex flex-col shadow-2xl
+        `}
+      >
+        <Button
+          onClick={closeSidebar}
+          className="md:hidden absolute top-4 right-4 z-50 p-2 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-all"
+          aria-label="Close menu"
+          variant="glass-grey"
+        >
+          <XMarkIcon className="w-6 h-6" />
+        </Button>
+
+        <div className="flex-1 min-h-0 overflow-y-auto pt-4 px-3 pb-3">
+          <Navigation onItemClick={closeSidebar} />
+        </div>
+
+        <div className="flex-shrink-0 p-4 border-t border-gray-800">
+          <div className="flex items-center gap-3 text-sm">
+            <div className="w-10 h-10 bg-gradient-to-br from-green-500/20 to-blue-500/20 rounded-full flex items-center justify-center border border-green-500/30 flex-shrink-0">
+              <span className="text-green-400 font-semibold text-sm">
+                {user?.fullName?.charAt(0)?.toUpperCase() || 'U'}
+              </span>
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-white text-sm font-medium truncate">
+                {user?.fullName || 'User'}
+              </p>
+              <p className="text-gray-500 text-xs truncate">
+                {user?.email || 'user@email.com'}
+              </p>
+            </div>
+            <button
+              onClick={handleLogout}
+              className="p-2 rounded-lg text-gray-400 hover:text-red-400 hover:bg-red-500/10 transition-all flex-shrink-0"
+              title="Logout"
+            >
+              <ArrowRightOnRectangleIcon className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      </aside>
+
+      {/* Mobile overlay */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 z-20 bg-black/60 backdrop-blur-sm md:hidden"
+          onClick={closeSidebar}
+        />
+      )}
+
+      {/* ✅ MAIN: flex-1 so it stretches, md:ml-72 for the fixed sidebar, pt-16 for the fixed header */}
+      <main className="flex-1 md:ml-72 pt-16">
+        <div className="p-4 md:p-6">
+          <div className="max-w-6xl mx-auto">
+            <Outlet />
+          </div>
+        </div>
+      </main>
+
+      {/* ✅ FOOTER: sibling of <main>, offset by sidebar on desktop.
+          As a flex child of the min-h-screen column, it sits at the very bottom
+          on short pages, and below the content on long pages. */}
+      <div className="md:ml-72">
+        <Footer />
+      </div>
+    </div>
+  );
+};
+
+export default DashboardLayout;
 </file>
 
 <file path="src/components/auth/RegisterForm.tsx">
@@ -9356,42 +9933,148 @@ export const RegisterForm = () => {
       await register(formData);
       showToast('Registration successful! 🎉', 'success');
       navigate('/dashboard');
+      // LAST WORKING IMPLEMENTATION
+    // } catch (error: any) {
+    //   console.error('❌ Registration error:', error);
+    //   const backendMessage: string = (error?.message || '').toString();
+    //   const lower = backendMessage.toLowerCase();
+
+    //   const newBackendErrors: FieldErrors = {};
+    //   let mapped = false;
+
+    //   if (lower.includes('email')) {
+    //     newBackendErrors.email = backendMessage || 'Please enter a valid email address.';
+    //     mapped = true;
+    //   }
+    //   if (lower.includes('phone') || lower.includes('contact')) {
+    //     newBackendErrors.contactNumber = backendMessage || 'Please enter a valid contact number.';
+    //     mapped = true;
+    //   }
+    //   if (lower.includes('password')) {
+    //     newBackendErrors.password = backendMessage || 'Please enter a valid password.';
+    //     mapped = true;
+    //   }
+    //   if (lower.includes('name')) {
+    //     newBackendErrors.fullName = backendMessage || 'Please enter a valid full name.';
+    //     mapped = true;
+    //   }
+
+    //   if (mapped) {
+    //     setFieldErrors((prev) => ({ ...prev, ...newBackendErrors }));
+    //     showToast('Please fix the highlighted fields.', 'error');
+    //   } else if (backendMessage && !lower.includes('validation errors occurred')) {
+    //     showToast(backendMessage, 'error');
+    //   } else {
+    //     showToast('Registration failed. Please check your details and try again.', 'error');
+    //   }
+    // } finally {
+    //   setIsLoading(false);
+    // }
+
     } catch (error: any) {
-      console.error('❌ Registration error:', error);
-      const backendMessage: string = (error?.message || '').toString();
-      const lower = backendMessage.toLowerCase();
+  console.error('❌ Registration error:', error);
 
-      const newBackendErrors: FieldErrors = {};
-      let mapped = false;
+  // ✅ NEW: Pull the ASP.NET Core validation dictionary if present.
+  //    Shape: { Password: ["Password is too common. ..."], Email: [...] }
+  const validationDict: Record<string, string[]> | undefined = error?.errors;
 
-      if (lower.includes('email')) {
-        newBackendErrors.email = backendMessage || 'Please enter a valid email address.';
-        mapped = true;
-      }
-      if (lower.includes('phone') || lower.includes('contact')) {
-        newBackendErrors.contactNumber = backendMessage || 'Please enter a valid contact number.';
-        mapped = true;
-      }
-      if (lower.includes('password')) {
-        newBackendErrors.password = backendMessage || 'Please enter a valid password.';
-        mapped = true;
-      }
-      if (lower.includes('name')) {
-        newBackendErrors.fullName = backendMessage || 'Please enter a valid full name.';
-        mapped = true;
-      }
+  const newBackendErrors: FieldErrors = {};
+  let mapped = false;
 
-      if (mapped) {
-        setFieldErrors((prev) => ({ ...prev, ...newBackendErrors }));
-        showToast('Please fix the highlighted fields.', 'error');
-      } else if (backendMessage && !lower.includes('validation errors occurred')) {
-        showToast(backendMessage, 'error');
-      } else {
-        showToast('Registration failed. Please check your details and try again.', 'error');
+  if (validationDict && typeof validationDict === 'object') {
+    // Map each backend field name → the matching frontend field name
+    const fieldMap: Record<string, FieldName> = {
+      Email: 'email',
+      FullName: 'fullName',
+      ContactNumber: 'contactNumber',
+      Password: 'password',
+      ConfirmPassword: 'confirmPassword',
+      // In case backend lower-cases them
+      email: 'email',
+      fullName: 'fullName',
+      contactNumber: 'contactNumber',
+      password: 'password',
+      confirmPassword: 'confirmPassword',
+    };
+
+    Object.entries(validationDict).forEach(([backendField, messages]) => {
+      const frontendField = fieldMap[backendField];
+      if (frontendField && messages && messages.length > 0) {
+        // Use the first message from the backend (most specific)
+        newBackendErrors[frontendField] = messages[0];
+        mapped = true;
       }
-    } finally {
-      setIsLoading(false);
+    });
+  }
+
+  // Fallback: if there's no structured dict (e.g., BusinessRuleException),
+  // do the old keyword-sniff on the message.
+  if (!mapped) {
+    const backendMessage: string = (error?.message || '').toString();
+    const lower = backendMessage.toLowerCase();
+
+    if (lower.includes('password')) {
+      newBackendErrors.password = backendMessage || 'Please enter a valid password.';
+      mapped = true;
     }
+    if (lower.includes('email')) {
+      newBackendErrors.email = backendMessage || 'Please enter a valid email address.';
+      mapped = true;
+    }
+    if (lower.includes('phone') || lower.includes('contact')) {
+      newBackendErrors.contactNumber = backendMessage || 'Please enter a valid contact number.';
+      mapped = true;
+    }
+    if (lower.includes('name')) {
+      newBackendErrors.fullName = backendMessage || 'Please enter a valid full name.';
+      mapped = true;
+    }
+  }
+
+  // Apply and decide on the toast
+  if (mapped) {
+    setFieldErrors((prev) => ({ ...prev, ...newBackendErrors }));
+
+    // ✅ NEW: If the backend flagged the password, force it into a "touched" state
+    //    so the red border + inline error render immediately even if the user
+    //    never blurred the field.
+    if (newBackendErrors.password) {
+      setTouchedFields((prev) => ({ ...prev, password: true }));
+      setFocusedField('password');
+    }
+    // Same treatment for any other field the backend complained about
+    (Object.keys(newBackendErrors) as FieldName[]).forEach((field) => {
+      setTouchedFields((prev) => ({ ...prev, [field]: true }));
+    });
+
+    // // ✅ NEW: Show the specific password message in the toast too, so the user
+    // //    sees it even if they scrolled past the field.
+    // if (newBackendErrors.password) {
+    //   showToast(newBackendErrors.password, 'error');
+    // } else {
+    //   showToast('Please fix the highlighted fields.', 'error');
+    // }
+
+        // ✅ NEW: Show the specific backend message for any field that was
+    //    flagged, so the user sees exactly what went wrong (e.g. "Email
+    //    is already registered") instead of a generic prompt.
+    const firstMessage = Object.values(newBackendErrors).find(
+      (msg): msg is string => typeof msg === 'string' && msg.length > 0
+    );
+    // showToast(firstMessage || 'Please fix the highlighted fields.', 'error');
+  } else {
+    const backendMessage: string = (error?.message || '').toString();
+    const lower = backendMessage.toLowerCase();
+
+    if (backendMessage && !lower.includes('validation errors occurred')) {
+      showToast(backendMessage, 'error');
+    } else {
+      showToast('Registration failed. Please check your details and try again.', 'error');
+    }
+  }
+} finally {
+  setIsLoading(false);
+}
   };
 
   // ─────────────────────────────────────────────────────────
@@ -9646,9 +10329,19 @@ export const RegisterForm = () => {
                   )}
                 </div>
               )}
-              {/* Only show the field-level error text for password if the checklist
-                  isn't taking over the messaging — keep as-is for consistency. */}
-              {/* {renderFieldError('password')} */}
+            
+              {/* Show a backend password error (e.g. "Password is too common") as an
+    extra line under the checklist. Safe because validators only produce
+    complexity messages the checklist doesn't cover. */}
+{isFieldActive('password') &&
+  fieldErrors.password &&
+  !isPasswordValid && (
+    <p className="mt-1.5 text-xs text-red-400 flex items-center gap-1">
+      <ExclamationCircleIcon className="w-3.5 h-3.5 flex-shrink-0" />
+      {fieldErrors.password}
+    </p>
+  )}
+              
             </div>
 
             {/* ───────────── Confirm Password ───────────── */}
@@ -9822,516 +10515,6 @@ export const RegisterForm = () => {
 };
 
 export default RegisterForm;
-</file>
-
-<file path="src/components/layout/DashboardLayout.tsx">
-// // src/components/layout/DashboardLayout.tsx
-// import React, { useState, useEffect } from 'react';
-// import { Outlet, useNavigate } from 'react-router-dom';
-// import { Header } from './Header';
-// import { Footer } from './Footer';
-// import { Navigation } from './Navigation';
-// import {Button} from './../common/Button';
-// import { 
-//   XMarkIcon,
-//   ArrowRightOnRectangleIcon
-// } from '@heroicons/react/24/outline';
-// import { useAuth } from '../../context/AuthContext';
-
-// export const DashboardLayout: React.FC = () => {
-//   const [sidebarOpen, setSidebarOpen] = useState(false);
-//   const { user, logout } = useAuth();
-//   const navigate = useNavigate();
-
-//   // Close sidebar on escape key
-//   useEffect(() => {
-//     const handleEscape = (e: KeyboardEvent) => {
-//       if (e.key === 'Escape' && sidebarOpen) {
-//         setSidebarOpen(false);
-//       }
-//     };
-//     window.addEventListener('keydown', handleEscape);
-//     return () => window.removeEventListener('keydown', handleEscape);
-//   }, [sidebarOpen]);
-
-//   // Prevent body scroll when sidebar is open on mobile
-//   useEffect(() => {
-//     if (sidebarOpen) {
-//       document.body.style.overflow = 'hidden';
-//     } else {
-//       document.body.style.overflow = 'unset';
-//     }
-//     return () => {
-//       document.body.style.overflow = 'unset';
-//     };
-//   }, [sidebarOpen]);
-
-//   const toggleSidebar = () => setSidebarOpen(!sidebarOpen);
-//   const closeSidebar = () => setSidebarOpen(false);
-
-//   const handleLogout = async () => {
-//     await logout();
-//     navigate('/login');
-//   };
-
-//   return (
-//     <div className="min-h-screen flex flex-col bg-gradient-to-br from-gray-900 via-gray-800 to-black">
-//       <Header onMenuToggle={toggleSidebar} />
-
-//       <div className="flex flex-1 overflow-hidden">
-//         {/* Mobile Sidebar Overlay */}
-//         {sidebarOpen && (
-//           <div 
-//             className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm md:hidden animate-fade-in"
-//             onClick={closeSidebar}
-//           />
-//         )}
-
-//         {/* Sidebar */}
-//         <aside className={`
-//           fixed md:sticky top-0 z-40 h-screen w-72 bg-gray-900/95 backdrop-blur-sm border-r border-gray-800
-//           transition-transform duration-300 ease-in-out
-//           ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
-//           flex flex-col shadow-2xl
-//         `}>
-//           {/* ✅ NO HEADER AT ALL - Just the close button floating */}
-//           {/* Mobile Close Button - Floating in top-right corner */}
-//           <Button
-//             onClick={closeSidebar}
-//             className="md:hidden absolute top-4 right-4 z-50 p-2 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-all"
-//             aria-label="Close menu"
-//             variant="glass-grey"
-//           >
-//             <XMarkIcon className="w-6 h-6" />
-//           </Button>
-
-//           {/* Navigation - Full height with padding for close button */}
-//           <div className="flex-1 overflow-y-auto pt-4 px-3 pb-3">
-//             <Navigation onItemClick={closeSidebar} />
-//           </div>
-
-//           {/* Sidebar Footer - User info with logout */}
-//           <div className="p-4 border-t border-gray-800">
-//             <div className="flex items-center gap-3 text-sm">
-//               <div className="w-10 h-10 bg-gradient-to-br from-green-500/20 to-blue-500/20 rounded-full flex items-center justify-center border border-green-500/30 flex-shrink-0">
-//                 <span className="text-green-400 font-semibold text-sm">
-//                   {user?.fullName?.charAt(0)?.toUpperCase() || 'U'}
-//                 </span>
-//               </div>
-//               <div className="flex-1 min-w-0">
-//                 <p className="text-white text-sm font-medium truncate">
-//                   {user?.fullName || 'User'}
-//                 </p>
-//                 <p className="text-gray-500 text-xs truncate">
-//                   {user?.email || 'user@email.com'}
-//                 </p>
-//               </div>
-//               <button
-//                 onClick={handleLogout}
-//                 className="p-2 rounded-lg text-gray-400 hover:text-red-400 hover:bg-red-500/10 transition-all flex-shrink-0"
-//                 title="Logout"
-//               >
-//                 <ArrowRightOnRectangleIcon className="w-4 h-4" />
-//               </button>
-//             </div>
-//           </div>
-//         </aside>
-
-//         {/* Main Content */}
-//         <main className="flex-1 overflow-y-auto p-4 md:p-6">
-//           <div className="max-w-6xl mx-auto">
-//             <Outlet />
-//           </div>
-//         </main>
-//       </div>
-
-//       <Footer />
-//     </div>
-//   );
-// };
-
-
-
-
-
-
-
-
-
-// export default DashboardLayout;
-// src/components/layout/DashboardLayout.tsx
-// import React, { useState, useEffect } from 'react'; 
-// import { Outlet, useNavigate } from 'react-router-dom';
-// import { Header } from './Header';
-// import { Footer } from './Footer';
-// import { Navigation } from './Navigation';
-// import {Button} from './../common/Button';
-// import { 
-//   XMarkIcon,
-//   ArrowRightOnRectangleIcon
-// } from '@heroicons/react/24/outline';
-// import { useAuth } from '../../context/AuthContext';
-
-// export const DashboardLayout: React.FC = () => {
-//   const [sidebarOpen, setSidebarOpen] = useState(false);
-//   const { user, logout } = useAuth();
-//   const navigate = useNavigate();
-
-//   // Close sidebar on escape key
-//   useEffect(() => {
-//     const handleEscape = (e: KeyboardEvent) => {
-//       if (e.key === 'Escape' && sidebarOpen) {
-//         setSidebarOpen(false);
-//       }
-//     };
-//     window.addEventListener('keydown', handleEscape);
-//     return () => window.removeEventListener('keydown', handleEscape);
-//   }, [sidebarOpen]);
-
-//   // Prevent body scroll when sidebar is open on mobile
-//   useEffect(() => {
-//     if (sidebarOpen) {
-//       document.body.style.overflow = 'hidden';
-//     } else {
-//       document.body.style.overflow = 'unset';
-//     }
-//     return () => {
-//       document.body.style.overflow = 'unset';
-//     };
-//   }, [sidebarOpen]);
-
-//   const toggleSidebar = () => setSidebarOpen(!sidebarOpen);
-//   const closeSidebar = () => setSidebarOpen(false);
-
-//   const handleLogout = async () => {
-//     await logout();
-//     navigate('/login');
-//   };
-
-//   return (
-//     <div className="min-h-screen flex flex-col bg-gradient-to-br from-gray-900 via-gray-800 to-black">
-//       <Header onMenuToggle={toggleSidebar} />
-
-//       <div className="flex flex-1 overflow-hidden">
-//         {/* Mobile Sidebar Overlay */}
-//         {sidebarOpen && (
-//           <div 
-//             className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm md:hidden animate-fade-in"
-//             onClick={closeSidebar}
-//           />
-//         )}
-
-//         {/* Sidebar */}
-//         <aside className={`
-//           fixed md:sticky top-0 z-40 h-screen w-72 bg-gray-900/95 backdrop-blur-sm border-r border-gray-800
-//           transition-transform duration-300 ease-in-out
-//           ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
-//           flex flex-col shadow-2xl
-//           md:h-[calc(100vh-4rem)]
-//         `}>
-//           {/* Mobile Close Button - Floating in top-right corner */}
-//           <Button
-//             onClick={closeSidebar}
-//             className="md:hidden absolute top-4 right-4 z-50 p-2 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-all"
-//             aria-label="Close menu"
-//             variant="glass-grey"
-//           >
-//             <XMarkIcon className="w-6 h-6" />
-//           </Button>
-
-//           {/* Navigation - Scrollable area */}
-//           <div className="flex-1 min-h-0 overflow-y-auto pt-4 px-3 pb-3">
-//             <Navigation onItemClick={closeSidebar} />
-//           </div>
-
-//           {/* Sidebar Footer - Fixed at bottom, never scrolls */}
-//           <div className="flex-shrink-0 p-4 border-t border-gray-800">
-//             <div className="flex items-center gap-3 text-sm">
-//               <div className="w-10 h-10 bg-gradient-to-br from-green-500/20 to-blue-500/20 rounded-full flex items-center justify-center border border-green-500/30 flex-shrink-0">
-//                 <span className="text-green-400 font-semibold text-sm">
-//                   {user?.fullName?.charAt(0)?.toUpperCase() || 'U'}
-//                 </span>
-//               </div>
-//               <div className="flex-1 min-w-0">
-//                 <p className="text-white text-sm font-medium truncate">
-//                   {user?.fullName || 'User'}
-//                 </p>
-//                 <p className="text-gray-500 text-xs truncate">
-//                   {user?.email || 'user@email.com'}
-//                 </p>
-//               </div>
-//               <button
-//                 onClick={handleLogout}
-//                 className="p-2 rounded-lg text-gray-400 hover:text-red-400 hover:bg-red-500/10 transition-all flex-shrink-0"
-//                 title="Logout"
-//               >
-//                 <ArrowRightOnRectangleIcon className="w-4 h-4" />
-//               </button>
-//             </div>
-//           </div>
-//         </aside>
-
-//         {/* Main Content */}
-//         <main className="flex-1 overflow-y-auto p-4 md:p-6">
-//           <div className="max-w-6xl mx-auto">
-//             <Outlet />
-//           </div>
-//         </main>
-//       </div>
-
-//       <Footer />
-//     </div>
-//   );
-// };
-
-// export default DashboardLayout;
-
-// src/components/layout/DashboardLayout.tsx
-// src/components/layout/DashboardLayout.tsx
-// src/components/layout/DashboardLayout.tsx
-// src/components/layout/DashboardLayout.tsx
-// import React, { useState, useEffect } from 'react';
-// import { Outlet, useNavigate } from 'react-router-dom';
-// import { Header } from './Header';
-// import { Footer } from './Footer';
-// import { Navigation } from './Navigation';
-// import { Button } from './../common/Button';
-// import { XMarkIcon, ArrowRightOnRectangleIcon } from '@heroicons/react/24/outline';
-// import { useAuth } from '../../context/AuthContext';
-
-// export const DashboardLayout: React.FC = () => {
-//   const [sidebarOpen, setSidebarOpen] = useState(false);
-//   const { user, logout } = useAuth();
-//   const navigate = useNavigate();
-
-//   useEffect(() => {
-//     const handleEscape = (e: KeyboardEvent) => {
-//       if (e.key === 'Escape' && sidebarOpen) setSidebarOpen(false);
-//     };
-//     window.addEventListener('keydown', handleEscape);
-//     return () => window.removeEventListener('keydown', handleEscape);
-//   }, [sidebarOpen]);
-
-//   useEffect(() => {
-//     document.body.style.overflow = sidebarOpen ? 'hidden' : 'unset';
-//     return () => {
-//       document.body.style.overflow = 'unset';
-//     };
-//   }, [sidebarOpen]);
-
-//   const toggleSidebar = () => setSidebarOpen(!sidebarOpen);
-//   const closeSidebar = () => setSidebarOpen(false);
-
-//   const handleLogout = async () => {
-//     await logout();
-//     navigate('/login');
-//   };
-
-//   return (
-//     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-black">
-
-//       {/* ============ HEADER (fixed, z-50) ============ */}
-//       <Header onMenuToggle={toggleSidebar} />
-
-//       {/* ============ SIDEBAR — position: fixed on desktop ============ */}
-//       {/* Nothing can scroll this. Ever. */}
-//       <aside
-//         className={`
-//           fixed top-16 bottom-0 left-0 z-30 w-72
-//           bg-gray-900/95 backdrop-blur-sm border-r border-gray-800
-//           transition-transform duration-300 ease-in-out
-//           ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
-//           flex flex-col shadow-2xl
-//         `}
-//       >
-//         {/* Mobile close button */}
-//         <Button
-//           onClick={closeSidebar}
-//           className="md:hidden absolute top-4 right-4 z-50 p-2 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-all"
-//           aria-label="Close menu"
-//           variant="glass-grey"
-//         >
-//           <XMarkIcon className="w-6 h-6" />
-//         </Button>
-
-//         {/* Nav list — only this scrolls if it's too tall */}
-//         <div className="flex-1 min-h-0 overflow-y-auto pt-4 px-3 pb-3">
-//           <Navigation onItemClick={closeSidebar} />
-//         </div>
-
-//         {/* Sidebar footer — pinned to bottom of fixed sidebar */}
-//         <div className="flex-shrink-0 p-4 border-t border-gray-800">
-//           <div className="flex items-center gap-3 text-sm">
-//             <div className="w-10 h-10 bg-gradient-to-br from-green-500/20 to-blue-500/20 rounded-full flex items-center justify-center border border-green-500/30 flex-shrink-0">
-//               <span className="text-green-400 font-semibold text-sm">
-//                 {user?.fullName?.charAt(0)?.toUpperCase() || 'U'}
-//               </span>
-//             </div>
-//             <div className="flex-1 min-w-0">
-//               <p className="text-white text-sm font-medium truncate">
-//                 {user?.fullName || 'User'}
-//               </p>
-//               <p className="text-gray-500 text-xs truncate">
-//                 {user?.email || 'user@email.com'}
-//               </p>
-//             </div>
-//             <button
-//               onClick={handleLogout}
-//               className="p-2 rounded-lg text-gray-400 hover:text-red-400 hover:bg-red-500/10 transition-all flex-shrink-0"
-//               title="Logout"
-//             >
-//               <ArrowRightOnRectangleIcon className="w-4 h-4" />
-//             </button>
-//           </div>
-//         </div>
-//       </aside>
-
-//       {/* Mobile overlay (only shows on mobile when drawer is open) */}
-//       {sidebarOpen && (
-//         <div
-//           className="fixed inset-0 z-20 bg-black/60 backdrop-blur-sm md:hidden"
-//           onClick={closeSidebar}
-//         />
-//       )}
-
-//       {/* ============ MAIN CONTENT ============ */}
-//       {/* ml-72 on desktop so it doesn't sit under the fixed sidebar. */}
-//       {/* mt-16 so it doesn't sit under the fixed header. */}
-//       <main className="md:ml-72 pt-16">
-//         <div className="p-4 md:p-6">
-//           <div className="max-w-6xl mx-auto">
-//             <Outlet />
-//           </div>
-//         </div>
-//         <Footer />
-//       </main>
-//     </div>
-//   );
-// };
-
-// export default DashboardLayout;
-// src/components/layout/DashboardLayout.tsx
-import React, { useState, useEffect } from 'react';
-import { Outlet, useNavigate } from 'react-router-dom';
-import { Header } from './Header';
-import { Footer } from './Footer';
-import { Navigation } from './Navigation';
-import { Button } from './../common/Button';
-import { XMarkIcon, ArrowRightOnRectangleIcon } from '@heroicons/react/24/outline';
-import { useAuth } from '../../context/AuthContext';
-
-export const DashboardLayout: React.FC = () => {
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const { user, logout } = useAuth();
-  const navigate = useNavigate();
-
-  useEffect(() => {
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && sidebarOpen) setSidebarOpen(false);
-    };
-    window.addEventListener('keydown', handleEscape);
-    return () => window.removeEventListener('keydown', handleEscape);
-  }, [sidebarOpen]);
-
-  useEffect(() => {
-    document.body.style.overflow = sidebarOpen ? 'hidden' : 'unset';
-    return () => {
-      document.body.style.overflow = 'unset';
-    };
-  }, [sidebarOpen]);
-
-  const toggleSidebar = () => setSidebarOpen(!sidebarOpen);
-  const closeSidebar = () => setSidebarOpen(false);
-
-  const handleLogout = async () => {
-    await logout();
-    navigate('/login');
-  };
-
-  return (
-    /* ✅ Outer wrapper: flex column + min-h-screen → footer pins to bottom on short pages */
-    <div className="min-h-screen flex flex-col bg-gradient-to-br from-gray-900 via-gray-800 to-black">
-
-      {/* Header — sticky at top of scroll */}
-      <Header onMenuToggle={toggleSidebar} />
-
-      {/* Sidebar — fixed, out of flow */}
-      <aside
-        className={`
-          fixed top-16 bottom-0 left-0 z-30 w-72
-          bg-gray-900/95 backdrop-blur-sm border-r border-gray-800
-          transition-transform duration-300 ease-in-out
-          ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
-          flex flex-col shadow-2xl
-        `}
-      >
-        <Button
-          onClick={closeSidebar}
-          className="md:hidden absolute top-4 right-4 z-50 p-2 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-all"
-          aria-label="Close menu"
-          variant="glass-grey"
-        >
-          <XMarkIcon className="w-6 h-6" />
-        </Button>
-
-        <div className="flex-1 min-h-0 overflow-y-auto pt-4 px-3 pb-3">
-          <Navigation onItemClick={closeSidebar} />
-        </div>
-
-        <div className="flex-shrink-0 p-4 border-t border-gray-800">
-          <div className="flex items-center gap-3 text-sm">
-            <div className="w-10 h-10 bg-gradient-to-br from-green-500/20 to-blue-500/20 rounded-full flex items-center justify-center border border-green-500/30 flex-shrink-0">
-              <span className="text-green-400 font-semibold text-sm">
-                {user?.fullName?.charAt(0)?.toUpperCase() || 'U'}
-              </span>
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-white text-sm font-medium truncate">
-                {user?.fullName || 'User'}
-              </p>
-              <p className="text-gray-500 text-xs truncate">
-                {user?.email || 'user@email.com'}
-              </p>
-            </div>
-            <button
-              onClick={handleLogout}
-              className="p-2 rounded-lg text-gray-400 hover:text-red-400 hover:bg-red-500/10 transition-all flex-shrink-0"
-              title="Logout"
-            >
-              <ArrowRightOnRectangleIcon className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      </aside>
-
-      {/* Mobile overlay */}
-      {sidebarOpen && (
-        <div
-          className="fixed inset-0 z-20 bg-black/60 backdrop-blur-sm md:hidden"
-          onClick={closeSidebar}
-        />
-      )}
-
-      {/* ✅ MAIN: flex-1 so it stretches, md:ml-72 for the fixed sidebar, pt-16 for the fixed header */}
-      <main className="flex-1 md:ml-72 pt-16">
-        <div className="p-4 md:p-6">
-          <div className="max-w-6xl mx-auto">
-            <Outlet />
-          </div>
-        </div>
-      </main>
-
-      {/* ✅ FOOTER: sibling of <main>, offset by sidebar on desktop.
-          As a flex child of the min-h-screen column, it sits at the very bottom
-          on short pages, and below the content on long pages. */}
-      <div className="md:ml-72">
-        <Footer />
-      </div>
-    </div>
-  );
-};
-
-export default DashboardLayout;
 </file>
 
 </files>
