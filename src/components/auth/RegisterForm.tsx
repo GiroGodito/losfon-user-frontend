@@ -1827,7 +1827,7 @@ export const RegisterForm = () => {
             isRateLimited={isRateLimited}
             countdown={rateLimitCountdown}
             resourceType="registration"
-            onDismiss={resetRateLimit}
+            // onDismiss={resetRateLimit}
             className="mb-4"
           />
 

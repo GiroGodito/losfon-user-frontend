@@ -408,7 +408,7 @@ export const LoginForm = () => {
             isRateLimited={isRateLimited}
             countdown={rateLimitCountdown}
             resourceType="login"
-            onDismiss={resetRateLimit}
+            // onDismiss={resetRateLimit}
             className="mb-4"
           />
 
